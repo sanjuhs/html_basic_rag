@@ -1,0 +1,73 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RAG Demo</title>
+    <style>
+        body {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .container {
+            margin-bottom: 20px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h2>Upload Document</h2>
+        <input type="file" id="fileInput">
+        <button onclick="uploadFile()">Upload</button>
+    </div>
+
+    <div class="container">
+        <h2>Ask Question</h2>
+        <textarea id="question"></textarea>
+        <button onclick="askQuestion()">Query</button>
+    </div>
+
+    <div class="container">
+        <h2>Response</h2>
+        <div id="response"></div>
+    </div>
+
+    <script>
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch('http://localhost:8000/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const result = await response.json();
+            alert(result.message);
+        }
+
+        async function askQuestion() {
+            const question = document.getElementById('question').value;
+            const response = await fetch('http://localhost:8000/query', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ question })
+            });
+            const result = await response.json();
+            document.getElementById('response').innerText = result.context;
+        }
+    </script>
+</body>
+
+</html>
