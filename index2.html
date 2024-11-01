@@ -1,0 +1,760 @@
+<!-- <!DOCTYPE html>
+<html>
+
+<head>
+    <title>RAG Chat Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #f5f5f5;
+            padding: 1rem;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .upload-container {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 70px);
+        }
+
+        .chat-container {
+            flex: 7;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #ddd;
+        }
+
+        .reference-container {
+            flex: 3;
+            padding: 1rem;
+            background: #f9f9f9;
+            overflow-y: auto;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            max-width: 80%;
+        }
+
+        .user-message {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+        }
+
+        .assistant-message {
+            background: #f0f0f0;
+            margin-right: auto;
+        }
+
+        .input-container {
+            padding: 1rem;
+            border-top: 1px solid #ddd;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .input-container textarea {
+            flex: 1;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: none;
+            height: 50px;
+        }
+
+        button {
+            padding: 0.5rem 1rem;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .reference-title {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            color: #666;
+        }
+
+        .reference-content {
+            padding: 0.5rem;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            margin-bottom: 1rem;
+        }
+
+        .loading {
+            display: none;
+            margin: 1rem;
+            text-align: center;
+            color: #666;
+        }
+
+        .file-name {
+            background: #e9ecef;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            margin-left: 1rem;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <div class="upload-container">
+            <input type="file" id="fileInput">
+            <button onclick="uploadFile()">Upload Document</button>
+            <span id="fileName" class="file-name"></span>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="chat-container">
+            <div id="chatMessages" class="chat-messages"></div>
+            <div id="loading" class="loading">Processing...</div>
+            <div class="input-container">
+                <textarea id="question" placeholder="Type your question here..."
+                    onkeydown="if(event.keyCode === 13 && !event.shiftKey) { event.preventDefault(); askQuestion(); }">
+                </textarea>
+                <button onclick="askQuestion()">Send</button>
+            </div>
+        </div>
+
+        <div class="reference-container">
+            <div class="reference-title">References</div>
+            <div id="references" class="reference-content"></div>
+        </div>
+    </div>
+
+    <script>
+        let messageHistory = [];
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const fileName = document.getElementById('fileName');
+            const file = fileInput.files[0];
+
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('http://localhost:8000/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                fileName.style.display = 'inline';
+                fileName.textContent = `${file.name} uploaded`;
+
+                addMessage('system', `Document processed: ${result.message}`);
+            } catch (error) {
+                addMessage('system', 'Error uploading document: ' + error.message);
+            }
+        }
+
+        function addMessage(type, content) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.textContent = content;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            messageHistory.push({ type, content });
+        }
+
+        function updateReferences(references) {
+            const referencesDiv = document.getElementById('references');
+            referencesDiv.innerHTML = references.map(ref =>
+                `<div class="reference-content">${ref}</div>`
+            ).join('');
+        }
+
+        async function askQuestion() {
+            const questionInput = document.getElementById('question');
+            const question = questionInput.value.trim();
+
+            if (!question) return;
+
+            addMessage('user', question);
+            questionInput.value = '';
+
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+
+            try {
+                const response = await fetch('http://localhost:8000/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ question })
+                });
+                const result = await response.json();
+
+                addMessage('assistant', result.context[0] || result.context);
+                updateReferences(Array.isArray(result.context) ? result.context : [result.context]);
+            } catch (error) {
+                addMessage('system', 'Error: ' + error.message);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // Enable enter to send
+        document.getElementById('question').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                askQuestion();
+            }
+        });
+    </script>
+</body>
+
+</html> -->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RAG Chat Demo</title>
+    <!-- Add Markdown parser -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.0.2/marked.min.js"></script>
+    <!-- Add highlight.js for code syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-color: #007bff;
+            --hover-color: #0056b3;
+            --bg-color: #f5f5f5;
+            --border-color: #ddd;
+            --text-color: #333;
+            --message-bg: #f0f0f0;
+            --user-message-bg: #007bff;
+            --user-message-color: white;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            color: var(--text-color);
+        }
+
+        .header {
+            background: var(--bg-color);
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-buttons {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .upload-container {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 70px);
+        }
+
+        .chat-container {
+            flex: 7;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--border-color);
+        }
+
+        .reference-container {
+            flex: 3;
+            padding: 1rem;
+            background: #f9f9f9;
+            overflow-y: auto;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 0.8rem 1rem;
+            border-radius: 8px;
+            max-width: 80%;
+            animation: slideIn 0.3s ease-out;
+            transition: all 0.3s ease;
+            word-wrap: break-word;
+        }
+
+        .message:hover {
+            transform: translateX(2px);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .message img {
+            max-width: 100%;
+            border-radius: 4px;
+        }
+
+        .user-message {
+            background: var(--user-message-bg);
+            color: var(--user-message-color);
+            margin-left: auto;
+        }
+
+        .assistant-message {
+            background: var(--message-bg);
+            margin-right: auto;
+        }
+
+        .system-message {
+            background: #ffd700;
+            color: #333;
+            margin: 0.5rem auto;
+            font-style: italic;
+            text-align: center;
+            max-width: 60%;
+        }
+
+        .input-container {
+            padding: 1rem;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            gap: 1rem;
+            background: white;
+        }
+
+        .input-container textarea {
+            flex: 1;
+            padding: 0.8rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            resize: none;
+            height: 60px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-container textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
+
+        button {
+            padding: 0.5rem 1rem;
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        button:hover {
+            background: var(--hover-color);
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .reference-title {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            color: #666;
+        }
+
+        .reference-content {
+            padding: 0.8rem;
+            background: white;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .reference-content:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .loading {
+            display: none;
+            margin: 1rem;
+            text-align: center;
+            color: #666;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .file-name {
+            background: #e9ecef;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            margin-left: 1rem;
+            display: none;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .theme-toggle {
+            background: none;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 0.5rem;
+        }
+
+        /* Dark mode styles */
+        body.dark-mode {
+            --primary-color: #0d6efd;
+            --hover-color: #0b5ed7;
+            --bg-color: #1a1a1a;
+            --border-color: #2d2d2d;
+            --text-color: #fff;
+            --message-bg: #2d2d2d;
+            background: #121212;
+        }
+
+        /* Code block styling */
+        pre code {
+            display: block;
+            padding: 1rem;
+            border-radius: 4px;
+            background: #f8f9fa;
+            margin: 0.5rem 0;
+            overflow-x: auto;
+        }
+
+        .dark-mode pre code {
+            background: #2d2d2d;
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 1rem;
+            background: #333;
+            color: white;
+            border-radius: 4px;
+            display: none;
+            animation: slideIn 0.3s ease-out;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <div class="upload-container">
+            <input type="file" id="fileInput">
+            <button onclick="uploadFile()">
+                <span>Upload Document</span>
+            </button>
+            <span id="fileName" class="file-name"></span>
+        </div>
+        <div class="header-buttons">
+            <button onclick="clearChat()" id="clearButton">Clear Chat</button>
+            <button onclick="toggleTheme()" class="theme-toggle">Toggle Theme</button>
+            <button onclick="exportChat()">Export Chat</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="chat-container">
+            <div id="chatMessages" class="chat-messages"></div>
+            <div id="loading" class="loading">
+                <div class="loading-spinner"></div>
+                <div>Processing...</div>
+            </div>
+            <div class="input-container">
+                <textarea id="question"
+                    placeholder="Type your question here... (Shift+Enter for new line, Enter to send)"
+                    onkeydown="if(event.keyCode === 13 && !event.shiftKey) { event.preventDefault(); askQuestion(); }">
+                </textarea>
+                <button onclick="askQuestion()">Send</button>
+            </div>
+        </div>
+
+        <div class="reference-container">
+            <div class="reference-title">References</div>
+            <div id="references" class="reference-content"></div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        // Initialize marked with options
+        marked.setOptions({
+            highlight: function (code, lang) {
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true
+        });
+
+        let messageHistory = [];
+
+        // Load messages from localStorage
+        function loadMessages() {
+            const saved = localStorage.getItem('chatHistory');
+            if (saved) {
+                messageHistory = JSON.parse(saved);
+                messageHistory.forEach(msg => addMessage(msg.type, msg.content, false));
+            }
+        }
+
+        // Save messages to localStorage
+        function saveMessages() {
+            localStorage.setItem('chatHistory', JSON.stringify(messageHistory));
+        }
+
+        function showToast(message, duration = 3000) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.style.display = 'block';
+            setTimeout(() => {
+                toast.style.display = 'none';
+            }, duration);
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('dark-mode');
+            localStorage.setItem('darkMode', document.body.classList.contains('dark-mode'));
+        }
+
+        // Export chat history
+        function exportChat() {
+            const export_data = {
+                timestamp: new Date().toISOString(),
+                messages: messageHistory
+            };
+
+            const blob = new Blob([JSON.stringify(export_data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `chat-history-${new Date().toISOString()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('Chat history exported!');
+        }
+
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const fileName = document.getElementById('fileName');
+            const file = fileInput.files[0];
+
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('http://localhost:8000/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                fileName.style.display = 'inline';
+                fileName.textContent = `${file.name} uploaded`;
+
+                addMessage('system', `Document processed: ${result.message}`);
+                showToast('Document uploaded successfully!');
+            } catch (error) {
+                addMessage('system', 'Error uploading document: ' + error.message);
+                showToast('Error uploading document', 5000);
+            }
+        }
+
+        function addMessage(type, content, save = true) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.innerHTML = marked.parse(content);
+
+            // Highlight code blocks
+            messageDiv.querySelectorAll('pre code').forEach((block) => {
+                hljs.highlightBlock(block);
+            });
+
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+            if (save) {
+                messageHistory.push({ type, content });
+                saveMessages();
+            }
+        }
+
+        function clearChat() {
+            if (confirm('Are you sure you want to clear the chat history?')) {
+                document.getElementById('chatMessages').innerHTML = '';
+                document.getElementById('references').innerHTML = '';
+                messageHistory = [];
+                localStorage.removeItem('chatHistory');
+                showToast('Chat cleared!');
+            }
+        }
+
+        function updateReferences(references) {
+            const referencesDiv = document.getElementById('references');
+            referencesDiv.innerHTML = references.map(ref =>
+                `<div class="reference-content">${marked.parse(ref)}</div>`
+            ).join('');
+        }
+
+        async function askQuestion() {
+            const questionInput = document.getElementById('question');
+            const question = questionInput.value.trim();
+
+            if (!question) return;
+
+            addMessage('user', question);
+            questionInput.value = '';
+
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+
+            try {
+                const response = await fetch('http://localhost:8000/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ question })
+                });
+                const result = await response.json();
+
+                addMessage('assistant', result.context[0] || result.context);
+                updateReferences(Array.isArray(result.context) ? result.context : [result.context]);
+            } catch (error) {
+                addMessage('system', 'Error: ' + error.message);
+                showToast('Error processing question', 5000);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadMessages();
+
+            // Load theme preference
+            if (localStorage.getItem('darkMode') === 'true') {
+                document.body.classList.add('dark-mode');
+            }
+        });
+
+        // Enable enter to send
+        document.getElementById('question').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                askQuestion();
+            }
+        });
+    </script>
+</body>
+
+</html>
