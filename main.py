@@ -12,14 +12,15 @@ numpy
 """
 
 # main.py
-from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from typing import List, Tuple
 import chromadb
 import torch
 import numpy as np
 from transformers import AutoModel, AutoTokenizer
+import chardet  # Add this import for encoding detection
 
 app = FastAPI()
 
@@ -42,6 +43,29 @@ collection = client.create_collection(
     name="documents",
     metadata={"hnsw:space": "cosine"}  # Using cosine similarity
 )
+
+def detect_encoding(content: bytes) -> str:
+    """Detect the encoding of the content using chardet"""
+    result = chardet.detect(content)
+    return result['encoding'] or 'utf-8'
+
+def safe_decode(content: bytes) -> str:
+    """Safely decode content with fallback encodings"""
+    # First try detected encoding
+    detected_encoding = detect_encoding(content)
+    try:
+        return content.decode(detected_encoding)
+    except UnicodeDecodeError:
+        # Fallback encodings to try
+        encodings = ['utf-8', 'latin1', 'cp1252', 'iso-8859-1']
+        for encoding in encodings:
+            try:
+                return content.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        
+        # If all encodings fail, try with errors='ignore'
+        return content.decode('utf-8', errors='ignore')
 
 def chunk_by_sentences(input_text: str, tokenizer: AutoTokenizer) -> Tuple[List[str], List[Tuple[int, int]]]:
     """Split text into sentences using tokenizer"""
@@ -101,30 +125,75 @@ def late_chunking(model_output: torch.Tensor, span_annotation: list, max_length=
 class Query(BaseModel):
     question: str
 
+# @app.post("/upload")
+# async def upload_document(file: UploadFile = File(...)):
+#     content = await file.read()
+#     text = content.decode("utf-8")
+    
+#     # Generate chunks using sentence-based splitting
+#     chunks, span_annotations = chunk_by_sentences(text, tokenizer)
+    
+#     # Generate embeddings using late chunking
+#     inputs = tokenizer(text, return_tensors='pt')
+#     model_output = model(**inputs)
+#     embeddings = late_chunking(model_output, [span_annotations])[0]
+    
+#     # Convert embeddings to list format for ChromaDB
+#     embeddings_list = [emb.tolist() for emb in embeddings]
+    
+#     # Add to ChromaDB
+#     collection.add(
+#         embeddings=embeddings_list,
+#         documents=chunks,
+#         ids=[f"doc_{i}" for i in range(len(chunks))]
+#     )
+    
+#     return {"message": f"Processed {len(chunks)} chunks with late embeddings"}
+
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
-    content = await file.read()
-    text = content.decode("utf-8")
-    
-    # Generate chunks using sentence-based splitting
-    chunks, span_annotations = chunk_by_sentences(text, tokenizer)
-    
-    # Generate embeddings using late chunking
-    inputs = tokenizer(text, return_tensors='pt')
-    model_output = model(**inputs)
-    embeddings = late_chunking(model_output, [span_annotations])[0]
-    
-    # Convert embeddings to list format for ChromaDB
-    embeddings_list = [emb.tolist() for emb in embeddings]
-    
-    # Add to ChromaDB
-    collection.add(
-        embeddings=embeddings_list,
-        documents=chunks,
-        ids=[f"doc_{i}" for i in range(len(chunks))]
-    )
-    
-    return {"message": f"Processed {len(chunks)} chunks with late embeddings"}
+    try:
+        content = await file.read()
+        
+        # Try to detect and decode the file content
+        text = safe_decode(content)
+        
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="File appears to be empty or corrupted")
+        
+        # Generate chunks using sentence-based splitting
+        chunks, span_annotations = chunk_by_sentences(text, tokenizer)
+        
+        if not chunks:
+            raise HTTPException(status_code=400, detail="No valid text chunks could be extracted")
+        
+        # Generate embeddings using late chunking
+        inputs = tokenizer(text, return_tensors='pt')
+        model_output = model(**inputs)
+        embeddings = late_chunking(model_output, [span_annotations])[0]
+        
+        # Convert embeddings to list format for ChromaDB
+        embeddings_list = [emb.tolist() for emb in embeddings]
+        
+        # Add to ChromaDB
+        collection.add(
+            embeddings=embeddings_list,
+            documents=chunks,
+            ids=[f"doc_{i}" for i in range(len(chunks))]
+        )
+        
+        return {
+            "message": f"Successfully processed {len(chunks)} chunks",
+            "encoding_used": detect_encoding(content),
+            "chunk_lengths": [len(chunk) for chunk in chunks]
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing file: {str(e)}. Please ensure the file is a valid text document."
+        )
+
 
 @app.post("/query")
 async def query_documents(query: Query):
